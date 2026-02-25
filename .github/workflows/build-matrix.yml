@@ -1,0 +1,57 @@
+name: Build with Matrix support
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Check for upstream updates daily at 4am UTC
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync-and-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync with upstream
+        run: |
+          git remote add upstream https://github.com/zeroclaw-labs/zeroclaw.git || true
+          git fetch upstream main
+          git checkout main
+          git merge upstream/main --no-edit || true
+          git push origin main || true
+
+      - name: Patch Dockerfile for channel-matrix
+        run: |
+          sed -i 's/cargo build --release --locked$/cargo build --release --locked --features channel-matrix/' Dockerfile
+          sed -i 's/cargo build --release --locked &&/cargo build --release --locked --features channel-matrix \&\&/' Dockerfile
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: release
+          push: true
+          tags: |
+            ghcr.io/geoffwellman/zeroclaw:latest
+            ghcr.io/geoffwellman/zeroclaw:matrix
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
